@@ -7,22 +7,34 @@ ROWS, TARGET = 7, 2
 HOP_TIME, HOP_HEIGHT = 0.28, 26
 CELLS = {(r, c) for r in range(ROWS) for c in range(r + 1)}
 DEFAULT_PALETTE = [(90, 160, 220), (190, 120, 70), (100, 210, 140)]
+LEVEL_PALETTES = (
+    ((60, 10, 10), (200, 80, 20), (255, 200, 50)),  # Fire
+    ((10, 30, 60), (30, 120, 200), (180, 230, 255)),  # Ice
+    ((20, 10, 40), (140, 20, 200), (230, 80, 255)),  # Neon
+    ((40, 25, 10), (120, 80, 30), (210, 175, 90)),  # Earth
+    ((80, 10, 40), (220, 60, 120), (255, 180, 210)),  # Candy
+    ((5, 40, 60), (10, 140, 160), (80, 230, 220)),  # Ocean
+    ((60, 20, 10), (210, 100, 40), (255, 160, 80)),  # Sunset
+    ((10, 40, 10), (50, 180, 50), (160, 255, 80)),  # Toxic
+)
+FLASH_DURATION = 0.5
+_flashes = {}  # Maps a completed cell to its remaining flash time.
 KEY_HOPS = {pygame.K_LEFT: (-1, -1), pygame.K_UP: (-1, 0), pygame.K_DOWN: (1, 0), pygame.K_RIGHT: (1, 1)}
 
 
 def cube_palette(level):
-    """Return a list of TARGET + 1 (r, g, b) colours for the cube stages, or None for the default."""
-    pass
+    """Return one RGB colour per paint stage, cycling the palettes by level."""
+    return list(LEVEL_PALETTES[(level - 1) % len(LEVEL_PALETTES)])
 
 
 def on_cube_completed(cell):
-    """Called when a cube first reaches its target colour; add a flash, sound, or bonus here."""
-    pass
+    """Start a short flash when a cube first reaches its target colour."""
+    _flashes[cell] = FLASH_DURATION
 
 
 def bonus_life_threshold():
-    """Return a score value at which the player earns an extra life, or None to disable bonus lives."""
-    pass
+    """Award an extra life for each 1,000 points earned."""
+    return 1000
 
 
 def cube_center(row, col):
@@ -87,6 +99,7 @@ class Game:
             self.level, self.score, self.lives = 1, 0, 3
             self.bonus_awarded = 0
         self.stages = {cell: 0 for cell in CELLS}
+        _flashes.clear()
         self.state = "play"
         self.respawn()
 
@@ -126,27 +139,37 @@ class Game:
         else:
             self.respawn()
 
+    def award_bonus_lives(self):
+        threshold = bonus_life_threshold()
+        if threshold:
+            earned = self.score // threshold
+            if earned > self.bonus_awarded:
+                self.lives += earned - self.bonus_awarded
+                self.bonus_awarded = earned
+
     def update(self, dt):
+        # Keep fading flashes on the level-clear screen.
+        for cell in list(_flashes):
+            _flashes[cell] -= dt
+            if _flashes[cell] <= 0:
+                del _flashes[cell]
         if self.state != "play":
             return
         landed = self.player.update(dt)
         if landed:
             self.paint(landed)
-        threshold = bonus_life_threshold()
-        if threshold and self.score // threshold > self.bonus_awarded:
-            self.bonus_awarded = self.score // threshold
-            self.lives += 1
+        self.award_bonus_lives()
         if self.player.fall is not None and self.player.fall > 260:
             self.lose_life()
             return
         self.coily_timer -= dt
         if self.coily is None and self.coily_timer <= 0:
             self.coily = Hopper((0, 0))
-        self.ball_timer -= dt
+        self.ball_timer -= dt * 0.25
         if self.ball_timer <= 0:
             self.balls.append(Hopper((0, 0)))
             self.ball_timer = 5.0
-        self.enemy_hop -= dt
+        self.enemy_hop -= dt * 0.25
         if self.enemy_hop <= 0:
             self.enemy_hop = 0.35
             self.move_enemies()
@@ -161,6 +184,7 @@ class Game:
                     return
         if all(stage >= TARGET for stage in self.stages.values()):
             self.score += 500
+            self.award_bonus_lives()
             self.state = "win"
 
     def draw_cube(self, screen, cell, colors):
@@ -173,6 +197,13 @@ class Game:
         pygame.draw.polygon(screen, shade(DEFAULT_PALETTE[0], 0.3), right)
         pygame.draw.polygon(screen, color, top)
         pygame.draw.polygon(screen, (240, 240, 240), top, 1)
+        if cell in _flashes:
+            alpha = int(220 * _flashes[cell] / FLASH_DURATION)
+            flash_surf = pygame.Surface((CUBE_W + 2, CUBE_H + 2), pygame.SRCALPHA)
+            origin = (cx - CUBE_W / 2, cy - CUBE_H / 2)
+            local_top = [(x - origin[0], y - origin[1]) for x, y in top]
+            pygame.draw.polygon(flash_surf, (255, 255, 255, alpha), local_top)
+            screen.blit(flash_surf, origin)
 
     def draw(self, screen):
         screen.fill((18, 20, 38))
